@@ -1,0 +1,23 @@
+# Generated MIDI files (large, regenerated from source)
+midi/full/*.mid
+midi/stems/*.mid
+midi/channels/*.mid
+midi/ollama/*.mid
+midi/*.mid
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Ollama raw outputs
+scripts/*_raw.txt
+
+# Environment
+.env
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
