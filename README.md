@@ -94,6 +94,9 @@ Generates complete arrangements with stems, channels, and optional ollama integr
 cd /home/baboon/psytrance-generator
 source ~/env/bin/activate
 
+# --- Show all available options ---
+python scripts/generate_full.py --help
+
 # --- Generate all 6 standard variations (psytrance, goa, darkpsy, prog) ---
 python scripts/generate_full.py --all
 

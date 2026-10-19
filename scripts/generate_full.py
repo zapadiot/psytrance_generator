@@ -228,7 +228,7 @@ def main():
     parser.add_argument("--bars", type=int, default=8, help="Number of bars")
     parser.add_argument("--root", default="A", choices=list(ROOT_NOTES.keys()), help="Root note")
     parser.add_argument("--scale", default="double_harmonic", 
-                       choices=["minor", "phrygian", "harmonic_minor", "double_harmonic", "minor_pentonic"],
+                       choices=["minor", "phrygian", "harmonic_minor", "double_harmonic", "minor_pentatonic"],
                        help="Scale")
     parser.add_argument("--seed", type=int, default=None, help="Random seed (None = random)")
     parser.add_argument("--name", default=None, help="Custom name for output")
