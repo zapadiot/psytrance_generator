@@ -96,7 +96,51 @@ def save_stems(score: symusic.Score, output_dir: Path, prefix: str = ""):
         print(f"  STEMS_{stem_name}: {len(stem_score.tracks)} tracks, {total_notes} notes -> {stem_file.name}")
 
 
-def generate_all_variations(base_dir: Path, use_ollama: bool = False):
+TRACK_SELECTIONS = {
+    "kick": {"Kick_Main", "Kick_Sub", "Kick_Click"},
+    "bass": {spec.name for spec in TRACK_SPECS if spec.name.startswith("Bass")},
+    "percussion": {
+        spec.name for spec in TRACK_SPECS
+        if spec.is_drum and not spec.name.startswith("Kick")
+    },
+    "lead": {
+        spec.name for spec in TRACK_SPECS
+        if any(token in spec.name for token in ("Lead", "Seq", "Acid"))
+    },
+    "pad": {
+        spec.name for spec in TRACK_SPECS
+        if any(token in spec.name for token in ("Pad", "Atmo", "FX", "Vocal", "Glitch"))
+    },
+}
+
+
+def save_selected_tracks(score: symusic.Score, output_dir: Path, selectors, prefix: str = ""):
+    """Save requested track categories or exact track names as MIDI files."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tracks_by_name = {track.name.lower(): track for track in score.tracks}
+    available = set(tracks_by_name)
+
+    for selector in selectors:
+        key = selector.strip().lower()
+        names = {name.lower() for name in TRACK_SELECTIONS.get(key, {key})}
+        unknown = names - available
+        if unknown:
+            raise ValueError(f"Unknown track selection '{selector}'")
+
+        selected = [tracks_by_name[name] for name in sorted(names)]
+        selected_score = symusic.Score()
+        selected_score.ticks_per_quarter = score.ticks_per_quarter
+        for track in selected:
+            selected_score.tracks.append(track)
+
+        output_name = selector.strip().lower().replace(" ", "_")
+        output_path = output_dir / f"{prefix}{output_name}.mid"
+        selected_score.dump_midi(str(output_path))
+        print(f"  Track selection {selector}: {len(selected)} tracks -> {output_path.name}")
+
+
+def generate_all_variations(base_dir: Path, use_ollama: bool = False, monte_carlo: bool = False,
+                            seed: int = 42, tracks=None):
     """Generate all standard variations."""
     variations = [
         ("psytrance_145bpm_A_8bar", PsyConfig(bpm=145, bars=8), 'A', 'double_harmonic'),
@@ -113,8 +157,9 @@ def generate_all_variations(base_dir: Path, use_ollama: bool = False):
         
         # Full arrangement
         full_dir = base_dir / "full"
+        full_dir.mkdir(parents=True, exist_ok=True)
         full_path = full_dir / f"{name}.mid"
-        score = generate_psytrance_midi(full_path, config, root, scale)
+        score = generate_psytrance_midi(full_path, config, root, scale, seed + len(name), monte_carlo)
         
         # Stems
         stems_dir = base_dir / "stems"
@@ -123,6 +168,8 @@ def generate_all_variations(base_dir: Path, use_ollama: bool = False):
         # Per-channel
         channels_dir = base_dir / "channels"
         save_per_channel(score, channels_dir, prefix=f"{name}_")
+        if tracks:
+            save_selected_tracks(score, base_dir / "tracks", tracks, prefix=f"{name}_")
         
         print(f"  ✓ Complete: {name}")
     
@@ -140,7 +187,8 @@ def generate_all_variations(base_dir: Path, use_ollama: bool = False):
 
 
 def generate_custom(base_dir: Path, config: PsyConfig, root: str, scale: str, 
-                    seed: int, name: str, use_ollama: bool = False):
+                    seed: int, name: str, use_ollama: bool = False, monte_carlo: bool = False,
+                    tracks=None):
     """Generate a single custom variation."""
     print(f"\n{'='*60}")
     print(f"Generating custom: {name}")
@@ -148,8 +196,9 @@ def generate_custom(base_dir: Path, config: PsyConfig, root: str, scale: str,
     
     # Full arrangement
     full_dir = base_dir / "full"
+    full_dir.mkdir(parents=True, exist_ok=True)
     full_path = full_dir / f"{name}.mid"
-    score = generate_psytrance_midi(full_path, config, root, scale, seed)
+    score = generate_psytrance_midi(full_path, config, root, scale, seed, monte_carlo)
     
     # Stems
     stems_dir = base_dir / "stems"
@@ -158,6 +207,8 @@ def generate_custom(base_dir: Path, config: PsyConfig, root: str, scale: str,
     # Per-channel
     channels_dir = base_dir / "channels"
     save_per_channel(score, channels_dir, prefix=f"{name}_")
+    if tracks:
+        save_selected_tracks(score, base_dir / "tracks", tracks, prefix=f"{name}_")
     
     print(f"  ✓ Complete: {name}")
     
@@ -183,6 +234,10 @@ def main():
     parser.add_argument("--name", default=None, help="Custom name for output")
     parser.add_argument("--all", action="store_true", help="Generate all standard variations")
     parser.add_argument("--ollama", action="store_true", help="Also generate with ollama model")
+    parser.add_argument("--monte-carlo", action="store_true",
+                        help="Apply Sobol parameter variation and MCMC groove humanization")
+    parser.add_argument("--tracks", default=None,
+                        help="Comma-separated track categories or names (e.g. lead,pad,bass)")
     parser.add_argument("--output-dir", default="/home/baboon/psytrance-generator/midi", help="Output directory")
     
     args = parser.parse_args()
@@ -196,13 +251,16 @@ def main():
     
     base_dir = Path(args.output_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
+    tracks = [value for value in args.tracks.split(",") if value.strip()] if args.tracks else None
     
     if args.all:
-        generate_all_variations(base_dir, use_ollama=args.ollama)
+        generate_all_variations(base_dir, use_ollama=args.ollama,
+                                monte_carlo=args.monte_carlo, seed=seed, tracks=tracks)
     else:
         config = PsyConfig(bpm=args.bpm, bars=args.bars)
         name = args.name or f"custom_{args.bpm}bpm_{args.root}_{args.scale}_{args.bars}bar_seed{seed}"
-        generate_custom(base_dir, config, args.root, args.scale, seed, name, use_ollama=args.ollama)
+        generate_custom(base_dir, config, args.root, args.scale, seed, name,
+                        use_ollama=args.ollama, monte_carlo=args.monte_carlo, tracks=tracks)
     
     print(f"\n✅ All outputs in: {base_dir}")
     print(f"  full/     - Complete arrangements")

@@ -21,6 +21,11 @@ def main():
                        choices=["minor", "phrygian", "harmonic_minor", "double_harmonic", "minor_pentatonic"],
                        help="Scale (default: double_harmonic)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument(
+        "--monte-carlo",
+        action="store_true",
+        help="Apply Python Sobol/MCMC groove and pattern variations",
+    )
     
     args = parser.parse_args()
     
@@ -29,8 +34,11 @@ def main():
     
     print(f"Generating: {output_path}")
     print(f"  BPM: {args.bpm}, Bars: {args.bars}, Root: {args.root}, Scale: {args.scale}")
+    print(f"  Monte Carlo: {'enabled' if args.monte_carlo else 'disabled'}")
     
-    generate_psytrance_midi(output_path, config, args.root, args.scale, args.seed)
+    generate_psytrance_midi(
+        output_path, config, args.root, args.scale, args.seed, args.monte_carlo
+    )
     print(f"Done!")
 
 

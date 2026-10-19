@@ -10,14 +10,26 @@ MIDI Channel Mapping (16 channels, multiple tracks per channel for DAW routing):
 - Ch 13-16: Pads, FX, Atmospheres
 
 Track count: ~50 tracks for full production setup
+
+Monte Carlo Enhancement:
+- Sobol Sequences (QMC) for low-discrepancy parameter space exploration
+- MCMC for groove/microtiming variations
+- Xoshiro256++ RNG for high-quality randomness
 """
 
 import symusic
 import random
+import math
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Callable, Optional
 from enum import Enum
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+from psytrance_montecarlo import (
+    Xoshiro256pp, SobolGenerator, MetropolisHastings, HamiltonianMonteCarlo,
+    GrooveExplorer, ParameterSpaceExplorer, VarianceReducer, create_rng, create_sobol
+)
 
 # ============================================================
 # CONFIGURATION
@@ -181,11 +193,85 @@ TRACK_SPECS = [
 # ============================================================
 
 class PsyPatternGenerator:
-    def __init__(self, config: PsyConfig, root: int = 57, scale_name: str = 'double_harmonic', seed: int = None):
+    def __init__(self, config: PsyConfig, root: int = 57, scale_name: str = 'double_harmonic',
+                 seed: int = None, monte_carlo: bool = False):
         self.cfg = config
         self.root = root
         self.scale = SCALES[scale_name]
         self.rng = random.Random(seed)  # Use passed seed
+        self.monte_carlo = monte_carlo
+        self.mc_rng = create_rng(seed)
+        # QMC dimensions: velocity, duration, timing, density, pitch and
+        # phase.  One Sobol point per track gives broad coverage while keeping
+        # a seed fully reproducible.
+        self.mc_params = create_sobol(6, seed or 0)
+        self.groove_offsets = self._make_groove() if monte_carlo else None
+
+    def _make_groove(self) -> Optional[List[float]]:
+        """Create one reproducible MCMC groove used by rhythmic tracks."""
+        explorer = GrooveExplorer(rng=self.mc_rng)
+        sample = explorer.explore_microtiming(n_samples=1, base_pattern=[i / 16.0 for i in range(16)])
+        return [max(-0.04, min(0.04, value)) for value in sample[0]]
+
+    def vary_track(self, track: symusic.Track, track_name: str):
+        """Apply bounded QMC/MCMC variation to a generated pattern.
+
+        The C++ benchmark separates low-discrepancy exploration (QMC) from
+        local sampling (MCMC).  The same separation is useful here: Sobol
+        parameters choose the variation profile for each track, while the
+        groove chain supplies correlated timing offsets.  Kick and bass are
+        deliberately excluded because their phase relationship is the musical
+        foundation of psytrance.
+        """
+        if not self.monte_carlo or not track.notes:
+            return
+        if track_name.startswith(('Kick', 'Bass')):
+            return
+
+        velocity_scale, duration_scale, timing_scale, density, pitch_chance, phase = (
+            self.mc_params.next_scaled([
+                (0.94, 1.06), (0.90, 1.10), (0.85, 1.15),
+                (0.02, 0.16), (0.05, 0.30), (-0.12, 0.12),
+            ])
+        )
+        melodic = track_name.startswith(('Lead', 'Seq', 'Acid', 'Vocal'))
+        varied_notes = []
+        original_count = len(track.notes)
+        for index, note in enumerate(track.notes):
+            grid_position = (note.time // self.cfg.sixteenth) % 16
+            groove = self.groove_offsets[grid_position] * self.cfg.sixteenth * timing_scale
+            jitter = self.mc_rng.next_float_range(-2.0, 2.0)
+
+            # Density changes are limited and never remove the first note of a
+            # track. This creates genuine pattern variants rather than merely
+            # humanizing an otherwise identical MIDI file.
+            drop = index > 0 and self.mc_rng.next_float() < density
+            if drop and len(varied_notes) >= max(1, original_count // 3):
+                continue
+
+            max_start = max(0, self.cfg.total_ticks - 1)
+            note.time = min(max_start, max(0, int(
+                note.time + groove + jitter + phase * self.cfg.sixteenth)))
+            note.velocity = max(1, min(127, int(note.velocity * velocity_scale)))
+            note.duration = max(1, int(note.duration * duration_scale))
+
+            # Keep percussion pitches intact. Melodic mutations stay in the
+            # configured scale and are restricted to small neighbouring steps.
+            if melodic and self.mc_rng.next_float() < pitch_chance:
+                degree_shift = self.mc_rng.choice([-2, -1, 1, 2])
+                note.pitch = max(0, min(127, self.scale_note(
+                    self._nearest_scale_degree(note.pitch) + degree_shift)))
+            varied_notes.append(note)
+
+        # symusic expects chronological note order after timing mutations.
+        track.notes = sorted(varied_notes, key=lambda item: item.time)
+
+    def _nearest_scale_degree(self, pitch: int) -> int:
+        """Return a scale degree near ``pitch`` for safe melodic mutation."""
+        relative = pitch - self.root
+        octave, remainder = divmod(relative, 12)
+        nearest = min(self.scale, key=lambda value: abs(value - remainder))
+        return octave * len(self.scale) + self.scale.index(nearest)
         
     def scale_note(self, degree: int, octave: int = 0) -> int:
         """Get MIDI note from scale degree and octave."""
@@ -715,7 +801,8 @@ def generate_psytrance_midi(
     config: PsyConfig = None,
     root_note: str = 'A',
     scale: str = 'double_harmonic',
-    seed: int = 42
+    seed: int = 42,
+    monte_carlo: bool = False
 ):
     """Generate complete psytrance MIDI arrangement."""
     
@@ -732,7 +819,7 @@ def generate_psytrance_midi(
     print(f"  Scale: {scale}")
     print(f"  Tracks: {len(TRACK_SPECS)}")
     
-    gen = PsyPatternGenerator(config, root, scale, seed)
+    gen = PsyPatternGenerator(config, root, scale, seed, monte_carlo)
     
     # Create score
     score = symusic.Score()
@@ -799,7 +886,10 @@ def generate_psytrance_midi(
         # Generate pattern
         if spec.name in generators:
             generators[spec.name](track)
-        
+            gen.vary_track(track, spec.name)
+            for note in track.notes:
+                note.time = min(config.total_ticks - 1, max(0, note.time))
+
         score.tracks.append(track)
         note_count = len(track.notes)
         print(f"  {spec.name:25s}: {note_count:4d} notes")

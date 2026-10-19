@@ -128,6 +128,14 @@ python scripts/generate_full.py \
 
 # --- Custom output directory ---
 python scripts/generate_full.py --all --output-dir /path/to/output
+
+# --- Use the Monte Carlo development for complex groove/pattern variations ---
+python scripts/generate_full.py --bpm 145 --bars 8 --seed 12345 \
+    --name mc_variation --monte-carlo
+
+# --- Export selected track groups alongside the full arrangement ---
+python scripts/generate_full.py --bpm 145 --bars 8 --seed 42 \
+    --name lead_pad_mc --monte-carlo --tracks lead,pad
 ```
 
 **Output Structure (per variation):**
@@ -139,6 +147,8 @@ midi/
 │   └── {name}_STEMS_{Kick,Bass,Percussion,Leads,Pads_FX}.mid
 ├── channels/       # 4 channel groups
 │   └── {name}_channel_{01,02,03,10}.mid
+├── tracks/         # Selected groups/tracks (when --tracks is used)
+│   └── {name}_{lead,pad,bass}.mid
 └── ollama/         # Ollama patterns (if --ollama)
     └── ollama_{kick_bass,percussion,lead_sequence,pads_atmosphere,full_arrangement}.mid
 ```
@@ -149,11 +159,13 @@ midi/
 | `--bpm` | 145 | Tempo (BPM) |
 | `--bars` | 8 | Number of bars (4, 8, 16) |
 | `--root` | A | Root note (A, A#, Bb, B, C, C#, Db, D, D#, Eb, E, F, F#, Gb, G, G#, Ab) |
-| `--scale` | double_harmonic | Scale (minor, phrygian, harmonic_minor, double_harmonic, minor_pentonic) |
+| `--scale` | double_harmonic | Scale (minor, phrygian, harmonic_minor, double_harmonic, minor_pentatonic) |
 | `--seed` | random | Random seed (integer, or omit for time-based) |
 | `--name` | auto | Output name prefix |
 | `--ollama` | false | Also generate with Musician-Llama |
+| `--monte-carlo` | false | Apply Sobol parameter exploration, MCMC groove sampling, density changes, and scale-safe melodic mutations |
 | `--all` | false | Generate all 6 standard variations |
+| `--tracks` | none | Comma-separated categories or exact track names; exports files under `tracks/` |
 | `--output-dir` | ./midi | Output directory |
 
 ---
@@ -168,6 +180,10 @@ python scripts/generate.py --bpm 145 --bars 8 --root A --scale double_harmonic -
 # Quick random
 python scripts/generate.py --bpm 150 --root F# --scale harmonic_minor --seed $RANDOM -o fast.mid
 
+# Enable Python Monte Carlo groove and pattern variations
+python scripts/generate.py --bpm 145 --bars 8 --seed 42 \
+    --monte-carlo -o mc_track.mid
+
 # Help
 python scripts/generate.py --help
 ```
@@ -181,6 +197,7 @@ python scripts/generate.py --help
 | `--root` | A | Root note |
 | `--scale` | double_harmonic | Scale |
 | `--seed` | random | Random seed |
+| `--monte-carlo` | false | Enable Python Sobol/MCMC MIDI variations |
 
 ---
 
